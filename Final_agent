@@ -1,0 +1,78 @@
+import socket
+import threading
+import time
+import random
+
+class Node:
+    def _init_(self, node_id, ip, port,initial_value,inputs,dt,steps, neighbors):
+        self.node_id = node_id
+        self.ip = ip
+        self.port = port
+        self.neighbors = neighbors
+        self.value = initial_value
+        self.inputs=inputs
+        self.dt=dt
+        self.steps=steps
+        self.received_values = {}
+        self.lock = threading.Lock()
+
+    def update_received_value(self, neighbor_id, neighbor_value):
+        with self.lock:
+            self.received_values[neighbor_id] = neighbor_value
+
+    def update_value(self):
+        with self.lock:
+            if self.received_values:
+                state_derivative=-len(self.received_values)@self.value+sum(self.received_values.values())+self.inputs
+                self.value+=state_derivative*self.dt
+                self.received_values = {}
+    def start_server(self):
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind((self.ip, self.port))
+        server_socket.listen()
+
+        while True:
+            conn, addr = server_socket.accept()
+            threading.Thread(target=self.handle_client, args=(conn, addr)).start()
+
+    def handle_client(self, conn, addr):
+        data = conn.recv(1024)
+        if data:
+            neighbor_id, neighbor_value = data.decode().split(',')
+            self.update_received_value(neighbor_id, float(neighbor_value))
+            conn.sendall(b"ACK")
+        conn.close()
+
+    def run(self):
+        for i in range(self.steps):
+            threading.Thread(target=self.start_server).start()
+            while True:
+                for neighbor_ip, neighbor_port in self.neighbors:
+                    try:
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.connect((neighbor_ip, neighbor_port))
+                            message = f"{self.node_id},{self.value}"
+                            s.sendall(message.encode())
+                            data = s.recv(1024)
+                            if data == b"ACK":
+                                print(f"Node {self.node_id} sent value {self.value} to {neighbor_ip}:{neighbor_port}")
+                    except Exception as e:
+                        print(f"Error communicating with {neighbor_ip}:{neighbor_port}: {e}")
+                #time.sleep(random.uniform(1, 3))
+                self.update_value()
+                print(f"Node {self.node_id} current value: {self.value}")
+
+if __name__== "_main_":
+    # Define your network topology (neighbors) for each node
+    # Example: Node 1 connects to Node 2 and Node 3
+    node_id = 1
+    ip = '192.168.240.47'  # Replace with actual IP address
+    port = 5000
+    initial_value=0.9
+    inputs=0
+    neighbors = [('192.168.240.38', 1234)]
+    dt=0.01
+    steps=1000
+    # Create and run the node
+    node = Node(node_id, ip, port,initial_value,inputs,dt,steps, neighbors)
+    node.run()
